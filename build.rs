@@ -91,4 +91,31 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
     }
     println!("cargo:rerun-if-changed=build.rs");
+
+    // Built-in custom server configuration.
+    // Set BUILTIN_RENDEZVOUS_SERVER, BUILTIN_RELAY_SERVER, BUILTIN_KEY as repository
+    // secrets and pass them as environment variables during the CI build.
+    // They are embedded into the binary at compile time; they never appear in source code.
+    for var in &[
+        "BUILTIN_RENDEZVOUS_SERVER",
+        "BUILTIN_RELAY_SERVER",
+        "BUILTIN_KEY",
+    ] {
+        println!("cargo:rerun-if-env-changed={}", var);
+        if let Ok(val) = std::env::var(var) {
+            if !val.trim().is_empty() {
+                println!("cargo:rustc-env={}={}", var, val.trim());
+            }
+        }
+    }
+
+    // When INCOMING_ONLY is set to any non-empty value the binary will hide the
+    // controller (主控) UI and expose only the controlled (被控) side.
+    println!("cargo:rerun-if-env-changed=INCOMING_ONLY");
+    if std::env::var("INCOMING_ONLY")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+    {
+        println!("cargo:rustc-cfg=incoming_only");
+    }
 }
