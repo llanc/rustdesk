@@ -1802,6 +1802,45 @@ pub fn load_custom_client() {
         };
         read_custom_client(&data.trim());
     }
+    apply_builtin_server_config();
+}
+
+/// Apply server / key settings that were compiled into the binary via the
+/// BUILTIN_RENDEZVOUS_SERVER, BUILTIN_RELAY_SERVER and BUILTIN_KEY environment
+/// variables.  The values are stored in OVERWRITE_SETTINGS so that they take
+/// precedence over any user-level configuration, and the rendezvous-server is
+/// additionally written to PROD_RENDEZVOUS_SERVER as a direct fallback.
+///
+/// When none of the variables were set at compile time this function is a no-op.
+fn apply_builtin_server_config() {
+    let server = option_env!("BUILTIN_RENDEZVOUS_SERVER").unwrap_or("");
+    let relay = option_env!("BUILTIN_RELAY_SERVER").unwrap_or("");
+    let key = option_env!("BUILTIN_KEY").unwrap_or("");
+
+    if server.is_empty() && relay.is_empty() && key.is_empty() {
+        return;
+    }
+
+    if !server.is_empty() {
+        *config::PROD_RENDEZVOUS_SERVER.write().unwrap() = server.to_string();
+    }
+
+    let mut overwrite = config::OVERWRITE_SETTINGS.write().unwrap();
+    if !server.is_empty() {
+        // Insert both naming conventions (dash and underscore) because different
+        // parts of hbb_common normalise config keys differently when looking up
+        // OVERWRITE_SETTINGS.  Storing both forms guarantees a match regardless
+        // of which convention the caller uses.
+        overwrite.insert("custom-rendezvous-server".to_string(), server.to_string());
+        overwrite.insert("custom_rendezvous_server".to_string(), server.to_string());
+    }
+    if !relay.is_empty() {
+        overwrite.insert("relay-server".to_string(), relay.to_string());
+        overwrite.insert("relay_server".to_string(), relay.to_string());
+    }
+    if !key.is_empty() {
+        overwrite.insert("key".to_string(), key.to_string());
+    }
 }
 
 fn read_custom_client_advanced_settings(

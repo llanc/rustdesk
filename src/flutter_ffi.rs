@@ -2390,7 +2390,13 @@ pub fn main_support_remove_wallpaper() -> bool {
 }
 
 pub fn is_incoming_only() -> SyncReturn<bool> {
-    SyncReturn(config::is_incoming_only())
+    let v = {
+        #[cfg(incoming_only)]
+        { true }
+        #[cfg(not(incoming_only))]
+        { config::is_incoming_only() }
+    };
+    SyncReturn(v)
 }
 
 pub fn is_outgoing_only() -> SyncReturn<bool> {
