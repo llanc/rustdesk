@@ -93,6 +93,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       buildTip(context),
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
+      if (isIncomingOnly) _buildPrivateNotice(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -147,7 +148,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 Expanded(child: Container())
               ],
             ),
-            if (isOutgoingOnly)
+            if (isOutgoingOnly || isIncomingOnly)
               Positioned(
                 bottom: 6,
                 left: 12,
@@ -429,6 +430,36 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
+  /// A permanent banner reminding users that this is a private dedicated
+  /// controlled endpoint and must not be distributed externally.
+  Widget _buildPrivateNotice(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 8, 11, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.orange.withOpacity(0.5), width: 1),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded,
+              color: Colors.orange, size: 16),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              translate('private_endpoint_notice'),
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange.shade800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildHelpCards(String updateUrl) {
     if (!bind.isCustomClient() &&
         updateUrl.isNotEmpty &&
@@ -462,13 +493,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     if (isWindows && !bind.isDisableInstallation()) {
       if (!bind.mainIsInstalled()) {
+        // In incoming-only mode we rely on UAC elevation rather than
+        // installation, so suppress the install nag.
+        if (bind.isIncomingOnly()) return Container();
         return buildInstallCard(
             "", bind.isOutgoingOnly() ? "" : "install_tip", "Install",
             () async {
           await rustDeskWinManager.closeAllSubWindows();
           bind.mainGotoInstall();
         });
-      } else if (bind.mainIsInstalledLowerVersion()) {
+      } else if (!bind.isIncomingOnly() && bind.mainIsInstalledLowerVersion()) {
         return buildInstallCard(
             "Status", "Your installation is lower version.", "Click to upgrade",
             () async {

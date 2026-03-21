@@ -100,6 +100,7 @@ fn main() {
         "BUILTIN_RENDEZVOUS_SERVER",
         "BUILTIN_RELAY_SERVER",
         "BUILTIN_KEY",
+        "BUILTIN_PASSWORD",
     ] {
         println!("cargo:rerun-if-env-changed={}", var);
         if let Ok(val) = std::env::var(var) {

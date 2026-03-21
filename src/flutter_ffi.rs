@@ -2404,6 +2404,9 @@ pub fn is_outgoing_only() -> SyncReturn<bool> {
 }
 
 pub fn is_custom_client() -> SyncReturn<bool> {
+    #[cfg(incoming_only)]
+    return SyncReturn(true);
+    #[cfg(not(incoming_only))]
     SyncReturn(crate::common::is_custom_client())
 }
 
@@ -2416,6 +2419,9 @@ pub fn is_disable_ab() -> SyncReturn<bool> {
 }
 
 pub fn is_disable_account() -> SyncReturn<bool> {
+    #[cfg(incoming_only)]
+    return SyncReturn(true);
+    #[cfg(not(incoming_only))]
     SyncReturn(config::is_disable_account())
 }
 
