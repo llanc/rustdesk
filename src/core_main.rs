@@ -177,6 +177,29 @@ pub fn core_main() -> Option<Vec<String>> {
         crate::platform::elevate_or_run_as_system(click_setup, _is_elevate, _is_run_as_system);
         return None;
     }
+    // For incoming-only builds: when not installed and not yet running with admin
+    // privileges, request a UAC elevation so the rendezvous registration with the
+    // ID server works correctly (the Windows firewall / service stack behaves
+    // differently for unprivileged portable processes).
+    #[cfg(all(windows, incoming_only))]
+    if !crate::platform::is_installed()
+        && args.is_empty()
+        && !_is_elevate
+        && !_is_run_as_system
+        && !crate::platform::is_elevated(None).unwrap_or(false)
+    {
+        log::info!("incoming-only portable: requesting UAC elevation for ID-server connectivity");
+        if let Ok(true) = crate::platform::run_uac(
+            std::env::current_exe()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_ref(),
+            "",
+        ) {
+            return None;
+        }
+        log::warn!("UAC elevation request failed, continuing without admin rights");
+    }
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     init_plugins(&args);

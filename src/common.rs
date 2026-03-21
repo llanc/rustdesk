@@ -1818,6 +1818,11 @@ fn apply_builtin_server_config() {
     let key = option_env!("BUILTIN_KEY").unwrap_or("");
 
     if server.is_empty() && relay.is_empty() && key.is_empty() {
+        #[cfg(incoming_only)]
+        {
+            let password = option_env!("BUILTIN_PASSWORD").unwrap_or("");
+            apply_incoming_only_settings(password);
+        }
         return;
     }
 
@@ -1840,6 +1845,65 @@ fn apply_builtin_server_config() {
     }
     if !key.is_empty() {
         overwrite.insert("key".to_string(), key.to_string());
+    }
+    // For incoming-only builds apply additional hardening: lock the approve mode
+    // to "password", set the access mode to "full", and hide the ID/relay server
+    // settings so the user cannot change them.
+    #[cfg(incoming_only)]
+    {
+        drop(overwrite);
+        let password = option_env!("BUILTIN_PASSWORD").unwrap_or("");
+        apply_incoming_only_settings(password);
+    }
+}
+
+/// Apply the set of built-in overrides that are specific to `incoming_only`
+/// builds.  Separated from `apply_builtin_server_config` so it can also be
+/// called standalone (e.g. when no server vars are set but a password is).
+#[cfg(incoming_only)]
+fn apply_incoming_only_settings(password: &str) {
+    // Overwrite server settings: lock approve-mode to password auth and
+    // access-mode to full control.
+    {
+        let mut overwrite = config::OVERWRITE_SETTINGS.write().unwrap();
+        overwrite.insert("approve-mode".to_string(), "password".to_string());
+        overwrite.insert("access-mode".to_string(), "full".to_string());
+        // Use only the permanent (fixed) password, not the one-time password.
+        if !password.is_empty() {
+            overwrite.insert(
+                "verification-method".to_string(),
+                "use-permanent-password".to_string(),
+            );
+        }
+    }
+
+    // Built-in settings consumed by Flutter's `mainGetBuildinOption`:
+    // hide the ID/relay server entry in the network settings pane so users
+    // cannot accidentally point the binary at a different server.
+    {
+        let mut buildin = config::BUILTIN_SETTINGS.write().unwrap();
+        buildin.insert("hide-server-settings".to_string(), "Y".to_string());
+        // Prevent users from changing the permanent password.
+        buildin.insert(
+            "disable-change-permanent-password".to_string(),
+            "Y".to_string(),
+        );
+    }
+
+    // Hard settings: disable the account panel and lock the permanent password
+    // to the compile-time value (if provided).
+    {
+        let mut hard = config::HARD_SETTINGS.write().unwrap();
+        hard.insert("disable-account".to_string(), "Y".to_string());
+        if !password.is_empty() {
+            hard.insert("password".to_string(), password.to_string());
+        }
+    }
+
+    // Persist the compile-time password as the permanent password so that the
+    // ID server / peer connections immediately use it without any manual setup.
+    if !password.is_empty() {
+        config::Config::set_permanent_password(password);
     }
 }
 

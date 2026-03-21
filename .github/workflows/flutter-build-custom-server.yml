@@ -6,12 +6,15 @@ name: Build Custom Server - Windows x64
 #   BUILTIN_RENDEZVOUS_SERVER  – ID-server address, e.g. "id.example.com"
 #   BUILTIN_RELAY_SERVER       – Relay-server address, e.g. "relay.example.com"
 #   BUILTIN_KEY                – Server public key (base64), e.g. "abc123=="
+#   BUILTIN_PASSWORD           – (optional) Fixed permanent connection password
 #
 # The built binary will:
 #   • Always connect to the above server/relay instead of the public RustDesk
 #     infrastructure.
 #   • Show only the "controlled" (被控) side – the remote-control panel is
 #     hidden at compile time (INCOMING_ONLY=1).
+#   • If BUILTIN_PASSWORD is set, bake a fixed permanent password into the
+#     binary so no manual password setup is needed on the controlled endpoint.
 
 on:
   workflow_dispatch:
@@ -31,6 +34,9 @@ env:
   BUILTIN_RENDEZVOUS_SERVER: ${{ secrets.BUILTIN_RENDEZVOUS_SERVER }}
   BUILTIN_RELAY_SERVER: ${{ secrets.BUILTIN_RELAY_SERVER }}
   BUILTIN_KEY: ${{ secrets.BUILTIN_KEY }}
+  # Optional: set BUILTIN_PASSWORD as a repository secret to bake a fixed
+  # permanent connection password into the binary.
+  BUILTIN_PASSWORD: ${{ secrets.BUILTIN_PASSWORD }}
   # ── compile-time flag: hide the controller UI ────────────────────────────
   INCOMING_ONLY: "1"
 
