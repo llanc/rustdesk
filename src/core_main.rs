@@ -177,28 +177,58 @@ pub fn core_main() -> Option<Vec<String>> {
         crate::platform::elevate_or_run_as_system(click_setup, _is_elevate, _is_run_as_system);
         return None;
     }
-    // For incoming-only builds: when not installed and not yet running with admin
-    // privileges, request a UAC elevation so the rendezvous registration with the
-    // ID server works correctly (the Windows firewall / service stack behaves
-    // differently for unprivileged portable processes).
+    // For incoming-only builds running as a portable (non-installed) exe we
+    // need a Windows service so that the rendezvous registration works exactly
+    // like the fully-installed case.
+    //
+    // Two-phase approach:
+    //  1. If the process is *not* yet elevated, request a UAC prompt so that
+    //     we can obtain the administrator rights required to create a service.
+    //     The re-launched elevated instance handles phase 2.
+    //  2. If the process *is* already elevated, create a demand-start Windows
+    //     service backed by the current executable, start it, and tell the UI
+    //     process to wait for the service's `--server` IPC instead of spinning
+    //     up its own in-process server.  A shutdown hook cleans up the service
+    //     when the app exits.
     #[cfg(all(windows, incoming_only))]
-    if !crate::platform::is_installed()
-        && args.is_empty()
-        && !_is_elevate
-        && !_is_run_as_system
-        && !crate::platform::is_elevated(None).unwrap_or(false)
-    {
-        log::info!("incoming-only portable: requesting UAC elevation for ID-server connectivity");
-        if let Ok(true) = crate::platform::run_uac(
-            std::env::current_exe()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .as_ref(),
-            "",
-        ) {
-            return None;
+    if !crate::platform::is_installed() && args.is_empty() && !_is_elevate && !_is_run_as_system {
+        if !crate::platform::is_elevated(None).unwrap_or(false) {
+            // Phase 1 – request elevation.
+            log::info!(
+                "incoming-only portable: requesting UAC elevation to create Windows service"
+            );
+            if let Ok(true) = crate::platform::run_uac(
+                std::env::current_exe()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .as_ref(),
+                "",
+            ) {
+                return None;
+            }
+            log::warn!("UAC elevation request failed, continuing without admin rights");
+        } else {
+            // Phase 2 – we are elevated; create the Windows service.
+            log::info!("incoming-only portable: creating Windows service");
+            match crate::platform::windows::create_and_start_portable_service() {
+                Ok(()) => {
+                    log::info!("Portable service created and started successfully");
+                    shutdown_hooks::add_shutdown_hook(|| {
+                        crate::platform::windows::stop_and_delete_portable_service();
+                    });
+                    // Do not start an in-process server; wait for the service's
+                    // `--server` process to expose its IPC endpoint instead.
+                    no_server = true;
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to create portable service: {}; \
+                         falling back to in-process server",
+                        e
+                    );
+                }
+            }
         }
-        log::warn!("UAC elevation request failed, continuing without admin rights");
     }
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
