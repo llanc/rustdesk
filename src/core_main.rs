@@ -213,9 +213,10 @@ pub fn core_main() -> Option<Vec<String>> {
             match crate::platform::windows::create_and_start_portable_service() {
                 Ok(()) => {
                     log::info!("Portable service created and started successfully");
-                    shutdown_hooks::add_shutdown_hook(|| {
+                    extern "C" fn stop_portable_service_on_shutdown() {
                         crate::platform::windows::stop_and_delete_portable_service();
-                    });
+                    }
+                    shutdown_hooks::add_shutdown_hook(stop_portable_service_on_shutdown);
                     // Do not start an in-process server; wait for the service's
                     // `--server` process to expose its IPC endpoint instead.
                     no_server = true;
