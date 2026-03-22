@@ -2979,6 +2979,91 @@ if exist \"{tray_shortcut}\" del /f /q \"{tray_shortcut}\"
     std::process::exit(0);
 }
 
+/// Run a batch-file snippet in the **current** (already-elevated) process
+/// without requesting a second UAC elevation.  The snippet is written to a
+/// temporary `.bat` file and executed by `cmd.exe /C`.
+///
+/// Unlike [`run_cmds`] this function does *not* use `runas::Command`; it is
+/// intended to be called only when the caller is already running with
+/// administrator privileges.
+fn run_cmds_no_elevation(cmds: String, tip: &str) -> ResultType<()> {
+    let tmp = write_cmds(cmds, "bat", tip)?;
+    let tmp2 = get_undone_file(&tmp)?;
+    let tmp_fn = tmp.to_str().unwrap_or("").to_string();
+    let res = std::process::Command::new("cmd.exe")
+        .args(&["/C", &tmp_fn])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    allow_err!(std::fs::remove_file(&tmp));
+    let _ = res?;
+    if tmp2.exists() {
+        allow_err!(std::fs::remove_file(tmp2));
+        bail!("{} failed", tip);
+    }
+    Ok(())
+}
+
+/// Create a demand-start Windows service whose binary path is the current
+/// (portable) executable.  Any pre-existing service with the same name is
+/// stopped and deleted first (best-effort).  The service is then started so
+/// that it immediately launches a `--server` child process in the active user
+/// session to handle rendezvous registration.
+///
+/// This function is meant to be called from an **already-elevated** process
+/// (i.e. after a successful UAC prompt in `incoming_only` portable mode).
+pub fn create_and_start_portable_service() -> ResultType<()> {
+    let current_exe = std::env::current_exe()?;
+    let exe = current_exe
+        .to_str()
+        .ok_or_else(|| anyhow!("Current executable path contains non-UTF-8 characters"))?;
+    let app_name = crate::get_app_name();
+    // Stop / delete any stale service with the same name, then create a fresh
+    // one pointing at the portable exe.  `ping -n N` is used as a portable
+    // sleep (each hop ≈ 1 s) so that the SCM has time to complete the
+    // previous operation before the next one starts.  This matches the
+    // convention already used in `get_create_service` / `install_service`.
+    let cmds = format!(
+        "\
+sc stop {app_name} 2>nul
+ping -n 3 127.0.0.1 >nul
+sc delete {app_name} 2>nul
+ping -n 2 127.0.0.1 >nul
+sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= demand DisplayName= \"{app_name} Service\"
+if %errorlevel% neq 0 exit /b 1
+sc start {app_name}
+if %errorlevel% neq 0 exit /b 1",
+        app_name = app_name,
+        exe = exe,
+    );
+    run_cmds_no_elevation(cmds, "create-portable-service")
+}
+
+/// Stop and delete the portable Windows service previously created by
+/// [`create_and_start_portable_service`].  Called from a shutdown hook;
+/// errors are logged but not propagated.  Any leftover service that survives
+/// a crash will be cleaned up by the *next* call to
+/// [`create_and_start_portable_service`], which always stops/deletes before
+/// re-creating.
+pub fn stop_and_delete_portable_service() {
+    let app_name = crate::get_app_name();
+    if let Err(e) = std::process::Command::new("sc")
+        .args(&["stop", &app_name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        log::warn!("stop_and_delete_portable_service: sc stop failed: {}", e);
+    }
+    // Give the service manager a moment to process the stop request.
+    std::thread::sleep(Duration::from_secs(2));
+    if let Err(e) = std::process::Command::new("sc")
+        .args(&["delete", &app_name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        log::warn!("stop_and_delete_portable_service: sc delete failed: {}", e);
+    }
+}
+
 /// Calculate the total size of a directory in KB
 /// Does not follow symlinks to prevent directory traversal attacks.
 fn get_directory_size_kb(path: &str) -> u64 {
