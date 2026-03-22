@@ -3031,7 +3031,10 @@ ping -n 2 127.0.0.1 >nul
 sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= demand DisplayName= \"{app_name} Service\"
 if %errorlevel% neq 0 exit /b 1
 sc start {app_name}
-if %errorlevel% neq 0 exit /b 1",
+if %errorlevel% neq 0 exit /b 1
+netsh advfirewall firewall delete rule name=\"{app_name} Service\" program=\"{exe}\" 2>nul
+netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=out action=allow program=\"{exe}\" enable=yes
+netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=in action=allow program=\"{exe}\" enable=yes",
         app_name = app_name,
         exe = exe,
     );
@@ -3061,6 +3064,28 @@ pub fn stop_and_delete_portable_service() {
         .status()
     {
         log::warn!("stop_and_delete_portable_service: sc delete failed: {}", e);
+    }
+    // Remove the firewall rules that were added when the portable service was created.
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy().into_owned();
+        let rule_name = format!("{} Service", app_name);
+        if let Err(e) = std::process::Command::new("netsh")
+            .args(&[
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                &format!("name={}", rule_name),
+                &format!("program={}", exe_str),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+        {
+            log::warn!(
+                "stop_and_delete_portable_service: netsh firewall delete failed: {}",
+                e
+            );
+        }
     }
 }
 
