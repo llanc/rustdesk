@@ -1863,18 +1863,13 @@ fn apply_builtin_server_config() {
 #[cfg(incoming_only)]
 fn apply_incoming_only_settings(password: &str) {
     // Overwrite server settings: lock approve-mode to password auth and
-    // access-mode to full control.
+    // access-mode to full control.  verification-method is left at its
+    // default (UseBothPasswords) so that both the compile-time fixed
+    // password and the auto-generated one-time password are accepted.
     {
         let mut overwrite = config::OVERWRITE_SETTINGS.write().unwrap();
         overwrite.insert("approve-mode".to_string(), "password".to_string());
         overwrite.insert("access-mode".to_string(), "full".to_string());
-        // Use only the permanent (fixed) password, not the one-time password.
-        if !password.is_empty() {
-            overwrite.insert(
-                "verification-method".to_string(),
-                "use-permanent-password".to_string(),
-            );
-        }
     }
 
     // Built-in settings consumed by Flutter's `mainGetBuildinOption`:

@@ -3042,22 +3042,23 @@ netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=in action=al
 }
 
 /// Stop and delete the portable Windows service previously created by
-/// [`create_and_start_portable_service`].  Called from a shutdown hook;
-/// errors are logged but not propagated.  Any leftover service that survives
-/// a crash will be cleaned up by the *next* call to
-/// [`create_and_start_portable_service`], which always stops/deletes before
-/// re-creating.
+/// [`create_and_start_portable_service`].  Called from the Phase-2 elevated
+/// process on startup (to clean up any service left over from an older build).
+/// Errors are logged but not propagated.
 pub fn stop_and_delete_portable_service() {
     let app_name = crate::get_app_name();
-    if let Err(e) = std::process::Command::new("sc")
+    let stop_succeeded = std::process::Command::new("sc")
         .args(&["stop", &app_name])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
-    {
-        log::warn!("stop_and_delete_portable_service: sc stop failed: {}", e);
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if stop_succeeded {
+        // Give the service manager a moment to process the stop request only
+        // when a service was actually running; skip the delay on a clean
+        // first-time run so startup is not slowed down unnecessarily.
+        std::thread::sleep(Duration::from_secs(2));
     }
-    // Give the service manager a moment to process the stop request.
-    std::thread::sleep(Duration::from_secs(2));
     if let Err(e) = std::process::Command::new("sc")
         .args(&["delete", &app_name])
         .creation_flags(CREATE_NO_WINDOW)
@@ -3086,6 +3087,113 @@ pub fn stop_and_delete_portable_service() {
                 e
             );
         }
+    }
+}
+
+/// Add Windows Firewall allow rules for the current (portable) executable so
+/// that incoming peer connections are not blocked.  Both inbound and outbound
+/// directions are covered.  Any previously existing rules with the same name
+/// are removed first to avoid duplicates.
+///
+/// This function must be called from an already-elevated process.
+pub fn add_incoming_only_portable_firewall_rules() {
+    let current_exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("add_incoming_only_portable_firewall_rules: {}", e);
+            return;
+        }
+    };
+    let exe_str = current_exe.to_string_lossy().into_owned();
+    let app_name = crate::get_app_name();
+    let rule_name = format!("{} Service", app_name);
+
+    // Delete any existing rules first (best-effort; ignore errors if the rule
+    // does not exist yet).
+    let _ = std::process::Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={}", rule_name),
+            &format!("program={}", exe_str),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+
+    // Add inbound allow rule.
+    if let Err(e) = std::process::Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            &format!("name={}", rule_name),
+            "dir=in",
+            "action=allow",
+            &format!("program={}", exe_str),
+            "enable=yes",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        log::warn!(
+            "add_incoming_only_portable_firewall_rules: inbound rule failed: {}",
+            e
+        );
+    }
+
+    // Add outbound allow rule.
+    if let Err(e) = std::process::Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            &format!("name={}", rule_name),
+            "dir=out",
+            "action=allow",
+            &format!("program={}", exe_str),
+            "enable=yes",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        log::warn!(
+            "add_incoming_only_portable_firewall_rules: outbound rule failed: {}",
+            e
+        );
+    }
+}
+
+/// Remove the Windows Firewall rules added by
+/// [`add_incoming_only_portable_firewall_rules`].  Called from a shutdown
+/// hook; errors are logged but not propagated.
+pub fn remove_incoming_only_portable_firewall_rules() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let exe_str = exe.to_string_lossy().into_owned();
+    let app_name = crate::get_app_name();
+    let rule_name = format!("{} Service", app_name);
+    if let Err(e) = std::process::Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={}", rule_name),
+            &format!("program={}", exe_str),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        log::warn!(
+            "remove_incoming_only_portable_firewall_rules: netsh failed: {}",
+            e
+        );
     }
 }
 
