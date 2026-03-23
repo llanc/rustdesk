@@ -195,7 +195,7 @@ pub fn core_main() -> Option<Vec<String>> {
         if !crate::platform::is_elevated(None).unwrap_or(false) {
             // Phase 1 – request elevation.
             log::info!(
-                "incoming-only portable: requesting UAC elevation to create Windows service"
+                "incoming-only portable: requesting UAC elevation to add firewall rules"
             );
             if let Ok(true) = crate::platform::run_uac(
                 std::env::current_exe()
@@ -208,27 +208,23 @@ pub fn core_main() -> Option<Vec<String>> {
             }
             log::warn!("UAC elevation request failed, continuing without admin rights");
         } else {
-            // Phase 2 – we are elevated; create the Windows service.
-            log::info!("incoming-only portable: creating Windows service");
-            match crate::platform::windows::create_and_start_portable_service() {
-                Ok(()) => {
-                    log::info!("Portable service created and started successfully");
-                    extern "C" fn stop_portable_service_on_shutdown() {
-                        crate::platform::windows::stop_and_delete_portable_service();
-                    }
-                    shutdown_hooks::add_shutdown_hook(stop_portable_service_on_shutdown);
-                    // Do not start an in-process server; wait for the service's
-                    // `--server` process to expose its IPC endpoint instead.
-                    no_server = true;
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to create portable service: {}; \
-                         falling back to in-process server",
-                        e
-                    );
-                }
+            // Phase 2 – we are elevated.
+            // Clean up any Windows service that was created by an older version
+            // of this binary (best-effort; errors are logged and ignored).
+            log::info!("incoming-only portable: cleaning up any previous service");
+            crate::platform::windows::stop_and_delete_portable_service();
+            // Add Windows Firewall allow rules so that incoming peer
+            // connections are not blocked by the default firewall policy.
+            log::info!("incoming-only portable: adding Windows Firewall rules");
+            crate::platform::windows::add_incoming_only_portable_firewall_rules();
+            // Remove the rules when this process exits.
+            extern "C" fn remove_firewall_rules_on_shutdown() {
+                crate::platform::windows::remove_incoming_only_portable_firewall_rules();
             }
+            shutdown_hooks::add_shutdown_hook(remove_firewall_rules_on_shutdown);
+            // `no_server` remains false; the rendezvous server runs
+            // in-process as this elevated user, in the interactive session,
+            // with direct access to the user's desktop and input devices.
         }
     }
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
